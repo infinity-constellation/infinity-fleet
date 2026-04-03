@@ -15,10 +15,6 @@ on:
         description: "staging or production"
         required: true
         type: string
-      ecr_repository:
-        description: "ECR repository name (e.g. infinity-factory-api)"
-        required: true
-        type: string
       release_notes:
         description: "Release notes markdown from semantic-release (new_release_notes output)"
         required: false
@@ -42,8 +38,6 @@ jobs:
           SERVICE: ${{ inputs.service }}
           VERSION: v${{ inputs.version }}
           ENVIRONMENT: ${{ inputs.environment }}
-          ECR_REPOSITORY: ${{ inputs.ecr_repository }}
-          BRANCH: ${{ github.ref_name }}
           COMMIT_SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
@@ -57,8 +51,6 @@ jobs:
           service      = os.environ["SERVICE"]
           version      = os.environ["VERSION"]
           env          = os.environ["ENVIRONMENT"]
-          ecr          = os.environ["ECR_REPOSITORY"]
-          branch       = os.environ["BRANCH"]
           sha          = os.environ["COMMIT_SHA"]
           sha_short    = sha[:7]
           repo         = os.environ["REPO"]
@@ -138,7 +130,6 @@ jobs:
                       "type": "mrkdwn",
                       "text": (
                           f"<{run_url}|Actions run> · "
-                          f"<{release_url}|GitHub release> · "
                           f"Image pushed to ECR · Flux deploy pending"
                       ),
                   }
