@@ -1,0 +1,168 @@
+name: Notify Slack on Release
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Human-readable service name (e.g. infinity-factory-api)"
+        required: true
+        type: string
+      version:
+        description: "Semver version without v prefix (e.g. 1.2.3)"
+        required: true
+        type: string
+      environment:
+        description: "staging or production"
+        required: true
+        type: string
+      ecr_repository:
+        description: "ECR repository name (e.g. infinity-factory-api)"
+        required: true
+        type: string
+      release_notes:
+        description: "Release notes markdown from semantic-release (new_release_notes output)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write release notes to file
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: printf '%s' "$RELEASE_NOTES" > /tmp/release_notes.md
+
+      - name: Build and post Slack message
+        env:
+          SERVICE: ${{ inputs.service }}
+          VERSION: v${{ inputs.version }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          ECR_REPOSITORY: ${{ inputs.ecr_repository }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, re, sys
+          import urllib.request
+
+          service      = os.environ["SERVICE"]
+          version      = os.environ["VERSION"]
+          env          = os.environ["ENVIRONMENT"]
+          ecr          = os.environ["ECR_REPOSITORY"]
+          branch       = os.environ["BRANCH"]
+          sha          = os.environ["COMMIT_SHA"]
+          sha_short    = sha[:7]
+          repo         = os.environ["REPO"]
+          server_url   = os.environ["SERVER_URL"]
+          run_id       = os.environ["RUN_ID"]
+          webhook_url  = os.environ["SLACK_WEBHOOK_URL"]
+
+          release_url  = f"{server_url}/{repo}/releases/tag/{version}"
+          commit_url   = f"{server_url}/{repo}/commit/{sha}"
+          run_url      = f"{server_url}/{repo}/actions/runs/{run_id}"
+
+          is_prod      = env == "production"
+          emoji        = ":rocket:" if is_prod else ":package:"
+          env_label    = "Production" if is_prod else "Staging"
+
+          # --- Parse release notes markdown → Slack mrkdwn ---
+          raw_notes = open("/tmp/release_notes.md").read().strip()
+
+          def md_to_mrkdwn(text):
+              # Strip the version heading line (first h1) — it's redundant
+              text = re.sub(r'^#[^#].*\n?', '', text, count=1)
+              # ### Heading → *Heading*
+              text = re.sub(r'^### (.+)$', r'*\1*', text, flags=re.MULTILINE)
+              # ## Heading → *Heading*
+              text = re.sub(r'^## (.+)$', r'*\1*', text, flags=re.MULTILINE)
+              # * item → • item  (markdown bullets)
+              text = re.sub(r'^\* ', '• ', text, flags=re.MULTILINE)
+              # **bold** → *bold*
+              text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+              # `code` stays as-is (Slack renders backtick inline code)
+              # [text](url) → <url|text>
+              text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<\2|\1>', text)
+              # Collapse 3+ blank lines to 2
+              text = re.sub(r'\n{3,}', '\n\n', text)
+              return text.strip()
+
+          changelog = md_to_mrkdwn(raw_notes) if raw_notes else ""
+          # Slack block text limit is 3000 chars
+          if len(changelog) > 2800:
+              changelog = changelog[:2800] + "\n_…truncated_"
+
+          # --- Build blocks ---
+          blocks = [
+              {
+                  "type": "header",
+                  "text": {
+                      "type": "plain_text",
+                      "text": f"{emoji}  {service} {version} → {env_label}",
+                      "emoji": True,
+                  },
+              },
+              {
+                  "type": "section",
+                  "fields": [
+                      {"type": "mrkdwn", "text": f"*Service*\n{service}"},
+                      {"type": "mrkdwn", "text": f"*Version*\n<{release_url}|{version}>"},
+                      {"type": "mrkdwn", "text": f"*Environment*\n{env_label}"},
+                      {"type": "mrkdwn", "text": f"*Branch*\n`{branch}`"},
+                      {"type": "mrkdwn", "text": f"*Commit*\n<{commit_url}|`{sha_short}`>"},
+                      {"type": "mrkdwn", "text": f"*ECR image*\n`{ecr}:{version}`"},
+                  ],
+              },
+          ]
+
+          if changelog:
+              blocks.append({"type": "divider"})
+              blocks.append({
+                  "type": "section",
+                  "text": {
+                      "type": "mrkdwn",
+                      "text": f"*What changed*\n{changelog}",
+                  },
+              })
+
+          blocks.append({"type": "divider"})
+          blocks.append({
+              "type": "context",
+              "elements": [
+                  {
+                      "type": "mrkdwn",
+                      "text": (
+                          f"<{run_url}|Actions run> · "
+                          f"<{release_url}|GitHub release> · "
+                          f"Image pushed to ECR · Flux deploy pending"
+                      ),
+                  }
+              ],
+          })
+
+          payload = {
+              "text": f"{emoji} {service} {version} released to {env_label}",
+              "blocks": blocks,
+          }
+
+          body = json.dumps(payload).encode()
+          req  = urllib.request.Request(
+              webhook_url,
+              data=body,
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req) as resp:
+              status = resp.status
+              if status != 200:
+                  print(f"Slack responded with {status}", file=sys.stderr)
+                  sys.exit(1)
+          print("Slack notification sent.")
+          PYEOF
