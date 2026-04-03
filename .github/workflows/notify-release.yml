@@ -113,12 +113,9 @@ jobs:
               {
                   "type": "section",
                   "fields": [
-                      {"type": "mrkdwn", "text": f"*Service*\n{service}"},
                       {"type": "mrkdwn", "text": f"*Version*\n<{release_url}|{version}>"},
                       {"type": "mrkdwn", "text": f"*Environment*\n{env_label}"},
-                      {"type": "mrkdwn", "text": f"*Branch*\n`{branch}`"},
                       {"type": "mrkdwn", "text": f"*Commit*\n<{commit_url}|`{sha_short}`>"},
-                      {"type": "mrkdwn", "text": f"*ECR image*\n`{ecr}:{version}`"},
                   ],
               },
           ]
@@ -129,7 +126,7 @@ jobs:
                   "type": "section",
                   "text": {
                       "type": "mrkdwn",
-                      "text": f"*What changed*\n{changelog}",
+                      "text": changelog,
                   },
               })
 
